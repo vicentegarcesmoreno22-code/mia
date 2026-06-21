@@ -189,6 +189,9 @@ function App() {
     null
   );
   const [walletBalance, setWalletBalance] = useState("0.00");
+  const [actionMessage, setActionMessage] = useState(
+    "Pannello pronto. Crea un account SIP, incolla i numeri e prepara la campagna."
+  );
   const [rechargeCredits, setRechargeCredits] = useState("10.00");
   const [rechargeBtc, setRechargeBtc] = useState("0.001");
   const [invoiceMessage, setInvoiceMessage] = useState(
@@ -219,8 +222,7 @@ function App() {
   )
     ? selectedSip
     : (sipList[0]?.username ?? "");
-  const canLaunch =
-    parsedNumbers.valid.length > 0 && consentConfirmed && selectedSipTarget !== "";
+  const canLaunch = parsedNumbers.valid.length > 0 && consentConfirmed && selectedSipTarget !== "";
   const activeCampaigns = campaigns.filter(
     (campaign) => campaign.status !== "Completata"
   ).length;
@@ -231,10 +233,28 @@ function App() {
 
   const handlePrepareCampaign = () => {
     if (!canLaunch) {
+      if (parsedNumbers.valid.length === 0) {
+        setActionMessage("Aggiungi almeno un numero valido prima di preparare la campagna.");
+        return;
+      }
+
+      if (!consentConfirmed) {
+        setActionMessage("Conferma consenso e opt-out prima di preparare la campagna.");
+        return;
+      }
+
+      if (!selectedSipTarget) {
+        setActionMessage("Genera prima un account SIP, poi potrai preparare la campagna.");
+        document.querySelector("#sip")?.scrollIntoView({ behavior: "smooth" });
+        return;
+      }
+
+      setActionMessage("Completa i dati mancanti prima di preparare la campagna.");
       return;
     }
 
     void (async () => {
+      setActionMessage("Salvataggio campagna in corso...");
       const payload = {
         name: campaignName.trim() || "Campagna senza nome",
         total: parsedNumbers.valid.length,
@@ -256,13 +276,13 @@ function App() {
       });
 
       if (!response.ok) {
-        setInvoiceMessage(await readApiError(response));
+        setActionMessage(await readApiError(response));
         return;
       }
 
       const body = (await response.json()) as { campaign: Campaign };
       setCampaigns([body.campaign, ...campaigns]);
-      setInvoiceMessage("Campagna salvata nel database.");
+      setActionMessage("Campagna salvata nel database.");
     })();
   };
 
@@ -275,6 +295,7 @@ function App() {
     };
 
     void (async () => {
+      setActionMessage("Creazione account SIP in corso...");
       const response = await fetch("/api/sip-accounts", {
         method: "POST",
         headers: {
@@ -285,18 +306,23 @@ function App() {
       });
 
       if (!response.ok) {
-        setInvoiceMessage(await readApiError(response));
+        setActionMessage(await readApiError(response));
         return;
       }
 
       const body = (await response.json()) as { account: SipAccount };
       setSipList([...sipList, body.account]);
       setSelectedSip(body.account.username);
-      setInvoiceMessage("Account SIP salvato nel database.");
+      setActionMessage("Account SIP salvato nel database e selezionato per la campagna.");
     })();
   };
 
   const handleDownloadNumbers = () => {
+    if (parsedNumbers.valid.length === 0) {
+      setActionMessage("Non ci sono numeri validi da scaricare.");
+      return;
+    }
+
     const file = new Blob([parsedNumbers.valid.join("\n")], {
       type: "text/plain;charset=utf-8",
     });
@@ -306,20 +332,25 @@ function App() {
     link.download = "numeri-validati.txt";
     link.click();
     URL.revokeObjectURL(url);
+    setActionMessage(`Scaricati ${parsedNumbers.valid.length} numeri validi.`);
   };
 
   const handleGenerateIvr = () => {
     setIvrText(
       "Ciao, ti stiamo chiamando per una richiesta autorizzata. Premi 1 per parlare con un operatore, oppure riaggancia per non essere ricontattato."
     );
+    setActionMessage("Testo IVR generato. Puoi modificarlo prima di salvare la campagna.");
+    document.querySelector("#ivr")?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleCreateInvoice = () => {
     void (async () => {
       setInvoiceMessage("Generazione fattura in corso...");
+      setActionMessage("Creazione fattura Bitcoin in corso...");
       const creditAmount = Number(rechargeCredits);
       if (!Number.isFinite(creditAmount) || creditAmount <= 0) {
         setInvoiceMessage("Inserisci un importo crediti valido.");
+        setActionMessage("Inserisci un importo crediti valido.");
         return;
       }
 
@@ -337,13 +368,16 @@ function App() {
 
       if (!response.ok) {
         setCurrentInvoice(null);
-        setInvoiceMessage(await readApiError(response));
+        const error = await readApiError(response);
+        setInvoiceMessage(error);
+        setActionMessage(error);
         return;
       }
 
       const body = (await response.json()) as { invoice: BitcoinInvoice };
       setCurrentInvoice(body.invoice);
       setInvoiceMessage("Fattura creata. In attesa pagamento BTC.");
+      setActionMessage("Fattura Bitcoin creata. Copia l'indirizzo e attendi la conferma pagamento.");
     })();
   };
 
@@ -354,6 +388,7 @@ function App() {
 
     void navigator.clipboard.writeText(currentInvoice.btcAddress);
     setInvoiceMessage("Indirizzo BTC copiato negli appunti.");
+    setActionMessage("Indirizzo BTC copiato negli appunti.");
   };
 
   const handleRefreshPayments = () => {
@@ -363,7 +398,16 @@ function App() {
 
     void (async () => {
       await loadServerState(authToken);
+      if (!currentInvoice) {
+        setInvoiceMessage("Nessuna fattura Bitcoin aperta");
+        setActionMessage("Non ci sono fatture da verificare. Genera prima una fattura BTC.");
+        return;
+      }
+
       setInvoiceMessage("Saldo e fatture aggiornati.");
+      setActionMessage(
+        "Saldo e fatture aggiornati. Se il webhook ha confermato il pagamento, i crediti sono gia accreditati."
+      );
     })();
   };
 
@@ -588,7 +632,6 @@ function App() {
               className="ghost-button"
               type="button"
               onClick={handleDownloadNumbers}
-              disabled={parsedNumbers.valid.length === 0}
             >
               <Download size={18} />
               Scarica numeri validi
@@ -603,6 +646,7 @@ function App() {
                 setSipList([]);
                 setWalletBalance("0.00");
                 setCurrentInvoice(null);
+                setActionMessage("Sessione chiusa.");
                 setIsAuthenticated(false);
               }}
             >
@@ -611,6 +655,11 @@ function App() {
             </button>
           </div>
         </section>
+
+        <div className="action-banner" role="status" aria-live="polite">
+          <Zap size={18} />
+          <span>{actionMessage}</span>
+        </div>
 
         <header className="hero">
           <div>
@@ -667,7 +716,6 @@ function App() {
             <button
               className="primary-button"
               type="button"
-              disabled={!canLaunch}
               onClick={handlePrepareCampaign}
             >
               <Play size={18} />
@@ -693,13 +741,13 @@ function App() {
             icon={<CalendarClock size={22} />}
             label="Campagne attive"
             value={activeCampaigns.toString()}
-            detail={`${campaigns.length} campagne salvate nel browser`}
+            detail={`${campaigns.length} campagne salvate nel database`}
           />
           <StatCard
             icon={<Wallet size={22} />}
             label="Credito"
-            value="0.018 BTC"
-            detail="Wallet cliente collegabile a BTCPay"
+            value={walletBalance}
+            detail="Saldo crediti disponibile"
           />
           <StatCard
             icon={<PhoneForwarded size={22} />}
@@ -733,7 +781,10 @@ function App() {
                 <span>Account SIP destinazione</span>
                 <select
                   value={selectedSipTarget}
-                  onChange={(event) => setSelectedSip(event.target.value)}
+                  onChange={(event) => {
+                    setSelectedSip(event.target.value);
+                    setActionMessage("Account SIP selezionato per la campagna.");
+                  }}
                 >
                   {sipList.map((account) => (
                     <option key={account.username} value={account.username}>
@@ -773,7 +824,6 @@ function App() {
               <button
                 className="primary-button"
                 type="button"
-                disabled={!canLaunch}
                 onClick={handlePrepareCampaign}
               >
                 <Zap size={18} />
@@ -847,11 +897,16 @@ function App() {
                 <input
                   type="file"
                   accept="audio/*"
-                  onChange={(event) =>
-                    setIvrFileName(
-                      event.target.files?.[0]?.name ?? "Nessun file selezionato"
-                    )
-                  }
+                  onChange={(event) => {
+                    const fileName =
+                      event.target.files?.[0]?.name ?? "Nessun file selezionato";
+                    setIvrFileName(fileName);
+                    setActionMessage(
+                      fileName === "Nessun file selezionato"
+                        ? "Nessun audio selezionato."
+                        : `Audio IVR selezionato: ${fileName}`
+                    );
+                  }}
                 />
               </label>
             </div>
@@ -889,6 +944,11 @@ function App() {
                   />
                 </div>
               ))}
+              {sipList.length === 0 && (
+                <div className="empty-state">
+                  Nessun account SIP creato. Premi il pulsante sotto per generarne uno.
+                </div>
+              )}
             </div>
             <button
               className="ghost-button full-width"
@@ -1041,6 +1101,11 @@ function App() {
                 </div>
               </div>
             ))}
+            {campaigns.length === 0 && (
+              <div className="empty-state">
+                Nessuna campagna salvata. Compila il setup e premi Prepara campagna.
+              </div>
+            )}
           </div>
 
           <div className="panel reports-panel">

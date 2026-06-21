@@ -431,6 +431,35 @@ a {
   justify-content: flex-end;
 }
 
+.action-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border: 1px solid rgba(72, 231, 255, 0.34);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(72, 231, 255, 0.12), transparent 42%),
+    rgba(4, 17, 14, 0.78);
+  color: #d9fff4;
+  box-shadow: 0 0 28px rgba(72, 231, 255, 0.1);
+}
+
+.action-banner svg {
+  flex: 0 0 auto;
+  color: var(--cyan);
+}
+
+.empty-state {
+  padding: 14px;
+  border: 1px dashed var(--line-bright);
+  border-radius: 18px;
+  background: rgba(53, 255, 157, 0.04);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .hero {
   display: flex;
   align-items: center;
