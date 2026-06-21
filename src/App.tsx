@@ -9,6 +9,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ClipboardPaste,
+  Copy,
   Download,
   FileText,
   Headphones,
@@ -57,6 +58,14 @@ type ApiUser = {
   username: string;
   telegram: string;
   role: "client" | "admin";
+};
+
+type BitcoinInvoice = {
+  id: string;
+  amountBtc: string;
+  btcAddress: string;
+  status: "pending" | "paid";
+  createdAt: string;
 };
 
 type ParsedNumbers = {
@@ -173,6 +182,9 @@ function App() {
   const [sipList, setSipList] = useLocalStorage<SipAccount[]>(
     "mia.sipAccounts",
     emptySipAccounts
+  );
+  const [currentInvoice, setCurrentInvoice] = useState<BitcoinInvoice | null>(
+    null
   );
   const [invoiceMessage, setInvoiceMessage] = useState(
     "Nessuna fattura Bitcoin aperta"
@@ -298,9 +310,36 @@ function App() {
   };
 
   const handleCreateInvoice = () => {
-    setInvoiceMessage(
-      `Fattura generata: ${new Date().toLocaleTimeString("it-IT")} - attesa conferme BTC`
-    );
+    void (async () => {
+      setInvoiceMessage("Generazione fattura in corso...");
+      const response = await fetch("/api/invoices", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ amountBtc: "0.001" }),
+      });
+
+      if (!response.ok) {
+        setCurrentInvoice(null);
+        setInvoiceMessage(await readApiError(response));
+        return;
+      }
+
+      const body = (await response.json()) as { invoice: BitcoinInvoice };
+      setCurrentInvoice(body.invoice);
+      setInvoiceMessage("Fattura creata. In attesa pagamento BTC.");
+    })();
+  };
+
+  const handleCopyInvoiceAddress = () => {
+    if (!currentInvoice) {
+      return;
+    }
+
+    void navigator.clipboard.writeText(currentInvoice.btcAddress);
+    setInvoiceMessage("Indirizzo BTC copiato negli appunti.");
   };
 
   const loadServerState = useCallback(async (token: string) => {
@@ -830,6 +869,48 @@ function App() {
               <strong>0.018 BTC</strong>
               <small>{invoiceMessage}</small>
             </div>
+            {currentInvoice && (
+              <div className="invoice-card">
+                <div className="invoice-header">
+                  <div>
+                    <span className="eyebrow">Fattura BTC</span>
+                    <strong>{currentInvoice.id}</strong>
+                  </div>
+                  <StatusPill
+                    label={
+                      currentInvoice.status === "paid"
+                        ? "Pagata"
+                        : "In attesa"
+                    }
+                    tone={currentInvoice.status === "paid" ? "good" : "accent"}
+                  />
+                </div>
+                <div className="invoice-grid">
+                  <div>
+                    <span>Importo</span>
+                    <strong>{currentInvoice.amountBtc} BTC</strong>
+                  </div>
+                  <div>
+                    <span>Creata</span>
+                    <strong>
+                      {new Date(currentInvoice.createdAt).toLocaleString("it-IT")}
+                    </strong>
+                  </div>
+                </div>
+                <div className="invoice-address">
+                  <span>Indirizzo BTC</span>
+                  <code>{currentInvoice.btcAddress}</code>
+                  <button
+                    className="ghost-button full-width"
+                    type="button"
+                    onClick={handleCopyInvoiceAddress}
+                  >
+                    <Copy size={18} />
+                    Copia indirizzo
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="security-list">
               <span>
                 <CheckCircle2 size={16} /> Accredito dopo conferme

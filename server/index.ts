@@ -48,12 +48,21 @@ type SipAccountRow = {
   created_at: string;
 };
 
+type InvoiceRow = {
+  id: string;
+  amount_btc: string;
+  btc_address: string;
+  status: "pending" | "paid";
+  created_at: string;
+};
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 const dataDirectory = process.env.DATA_DIR ?? join(projectRoot, "data");
 const databasePath = process.env.DATABASE_PATH ?? join(dataDirectory, "mia.sqlite");
 const jwtSecret =
   process.env.AUTH_TOKEN_SECRET ?? "dev-secret-change-me-before-production";
+const btcReceiveAddress = process.env.BTC_RECEIVE_ADDRESS ?? "";
 const port = Number(process.env.API_PORT ?? 4000);
 
 mkdirSync(dataDirectory, { recursive: true });
@@ -93,6 +102,16 @@ db.exec(`
     username TEXT NOT NULL,
     password TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'offline',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS bitcoin_invoices (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    amount_btc TEXT NOT NULL,
+    btc_address TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
@@ -188,6 +207,10 @@ const sipSchema = z.object({
   name: z.string().trim().min(1).max(80),
   username: z.string().trim().min(3).max(80),
   password: z.string().trim().min(6).max(128),
+});
+
+const invoiceSchema = z.object({
+  amountBtc: z.string().trim().regex(/^\d+(\.\d{1,8})?$/, "Importo BTC non valido"),
 });
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? true }));
@@ -388,6 +411,70 @@ app.post("/api/sip-accounts", requireAuth, (request, response) => {
       password: parsed.data.password,
       status: "offline",
       created_at: createdAt,
+    },
+  });
+});
+
+app.get("/api/invoices", requireAuth, (_request, response) => {
+  const user = response.locals.user as AuthUser;
+  const invoices = db
+    .prepare(
+      `SELECT id, amount_btc, btc_address, status, created_at
+       FROM bitcoin_invoices
+       WHERE user_id = ?
+       ORDER BY created_at DESC`
+    )
+    .all(user.id) as InvoiceRow[];
+
+  response.json({
+    invoices: invoices.map((invoice) => ({
+      id: invoice.id,
+      amountBtc: invoice.amount_btc,
+      btcAddress: invoice.btc_address,
+      status: invoice.status,
+      createdAt: invoice.created_at,
+    })),
+  });
+});
+
+app.post("/api/invoices", requireAuth, (request, response) => {
+  const parsed = invoiceSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: parsed.error.issues[0]?.message });
+    return;
+  }
+
+  if (!btcReceiveAddress) {
+    response.status(409).json({
+      error: "Configura BTC_RECEIVE_ADDRESS nel file .env prima di generare fatture",
+    });
+    return;
+  }
+
+  const user = response.locals.user as AuthUser;
+  const id = `BTC-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const createdAt = new Date().toISOString();
+
+  db.prepare(
+    `INSERT INTO bitcoin_invoices
+      (id, user_id, amount_btc, btc_address, status, created_at)
+     VALUES
+      (@id, @userId, @amountBtc, @btcAddress, 'pending', @createdAt)`
+  ).run({
+    id,
+    userId: user.id,
+    amountBtc: parsed.data.amountBtc,
+    btcAddress: btcReceiveAddress,
+    createdAt,
+  });
+
+  response.status(201).json({
+    invoice: {
+      id,
+      amountBtc: parsed.data.amountBtc,
+      btcAddress: btcReceiveAddress,
+      status: "pending",
+      createdAt,
     },
   });
 });

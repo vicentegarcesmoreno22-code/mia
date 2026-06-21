@@ -22,6 +22,7 @@ Prima versione del pannello web per campagne IVR multi-cliente.
 - Database SQLite locale.
 - Registrazione/login reali con password hashata.
 - Token autenticazione per chiamare API campagne e SIP.
+- Generazione fatture Bitcoin con indirizzo configurato da ambiente.
 
 ## Comandi
 
@@ -46,6 +47,7 @@ Copia `.env.example` in `.env` e cambia almeno:
 
 ```text
 AUTH_TOKEN_SECRET=una-stringa-lunga-casuale
+BTC_RECEIVE_ADDRESS=il-tuo-indirizzo-bitcoin
 ```
 
 Il database locale viene creato in `data/mia.sqlite`.
