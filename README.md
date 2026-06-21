@@ -12,7 +12,8 @@ Prima versione del pannello web per campagne IVR multi-cliente.
 - Sezione crediti Bitcoin pronta per integrazione BTCPay Server.
 - Visuale animata in homepage.
 - Accesso demo cliente.
-- Pagina login demo iniziale con email/password precompilate.
+- Pagina login demo iniziale con nome utente/password precompilati.
+- Registrazione demo con nome utente, password e contatto Telegram.
 - Salvataggio locale nel browser per campagne e account SIP demo.
 - Generazione account SIP demo.
 - Esportazione numeri validati in `.txt`.

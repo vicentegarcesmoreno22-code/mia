@@ -317,6 +317,37 @@ a {
   font-size: 0.88rem;
 }
 
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.auth-tabs button {
+  min-height: 42px;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 900;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.auth-tabs button.active,
+.auth-tabs button:hover {
+  background: rgba(53, 255, 157, 0.12);
+  color: var(--text);
+  box-shadow: 0 0 18px rgba(53, 255, 157, 0.14);
+}
+
 .input-with-icon {
   display: flex;
   align-items: center;

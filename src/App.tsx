@@ -16,7 +16,7 @@ import {
   ListChecks,
   LogIn,
   LockKeyhole,
-  Mail,
+  MessageCircle,
   PhoneForwarded,
   Plus,
   Play,
@@ -26,6 +26,7 @@ import {
   Sparkles,
   Upload,
   UserCheck,
+  UserPlus,
   Users,
   Wallet,
   Zap,
@@ -49,6 +50,12 @@ type Campaign = {
   sip: string;
   ivr: string;
   createdAt: string;
+};
+
+type RegisteredUser = {
+  username: string;
+  password: string;
+  telegram: string;
 };
 
 type ParsedNumbers = {
@@ -107,6 +114,14 @@ const defaultCampaigns: Campaign[] = [
     sip: "cliente01-milano",
     ivr: "business.mp3",
     createdAt: "20/06/2026, 18:05",
+  },
+];
+
+const defaultRegisteredUsers: RegisteredUser[] = [
+  {
+    username: "cliente_demo",
+    password: "demo1234",
+    telegram: "@cliente_demo",
   },
 ];
 
@@ -181,9 +196,22 @@ function useLocalStorage<T>(key: string, initialValue: T) {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("cliente@demo.it");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [loginUsername, setLoginUsername] = useState("cliente_demo");
   const [loginPassword, setLoginPassword] = useState("demo1234");
-  const [clientName] = useLocalStorage("mia.clientName", "Cliente Demo");
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerTelegram, setRegisterTelegram] = useState("");
+  const [authMessage, setAuthMessage] = useState(
+    "Puoi entrare con cliente_demo / demo1234 oppure registrare un nuovo cliente."
+  );
+  const [clientName, setClientName] = useLocalStorage(
+    "mia.clientName",
+    "Cliente Demo"
+  );
+  const [registeredUsers, setRegisteredUsers] = useLocalStorage<
+    RegisteredUser[]
+  >("mia.registeredUsers", defaultRegisteredUsers);
   const [campaigns, setCampaigns] = useLocalStorage<Campaign[]>(
     "mia.campaigns",
     defaultCampaigns
@@ -293,17 +321,68 @@ function App() {
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const matchingUser = registeredUsers.find(
+      (user) =>
+        user.username === loginUsername.trim() && user.password === loginPassword
+    );
+
+    if (!matchingUser) {
+      setAuthMessage("Username o password non corretti.");
+      return;
+    }
+
+    setClientName(matchingUser.username);
+    setAuthMessage(`Accesso effettuato come ${matchingUser.username}.`);
+    setIsAuthenticated(true);
+  };
+
+  const handleRegister = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const username = registerUsername.trim();
+    const telegram = registerTelegram.trim();
+
+    if (!username || !registerPassword || !telegram) {
+      setAuthMessage("Compila username, password e contatto Telegram.");
+      return;
+    }
+
+    if (registeredUsers.some((user) => user.username === username)) {
+      setAuthMessage("Questo username esiste gia. Scegline un altro.");
+      return;
+    }
+
+    const newUser: RegisteredUser = {
+      username,
+      password: registerPassword,
+      telegram,
+    };
+
+    setRegisteredUsers([...registeredUsers, newUser]);
+    setClientName(username);
+    setLoginUsername(username);
+    setLoginPassword(registerPassword);
+    setAuthMessage(`Registrazione completata. Telegram salvato: ${telegram}.`);
     setIsAuthenticated(true);
   };
 
   if (!isAuthenticated) {
     return (
       <LoginPage
-        email={loginEmail}
-        password={loginPassword}
-        onEmailChange={setLoginEmail}
-        onPasswordChange={setLoginPassword}
+        mode={authMode}
+        loginUsername={loginUsername}
+        loginPassword={loginPassword}
+        registerUsername={registerUsername}
+        registerPassword={registerPassword}
+        registerTelegram={registerTelegram}
+        message={authMessage}
+        onModeChange={setAuthMode}
+        onLoginUsernameChange={setLoginUsername}
+        onLoginPasswordChange={setLoginPassword}
+        onRegisterUsernameChange={setRegisterUsername}
+        onRegisterPasswordChange={setRegisterPassword}
+        onRegisterTelegramChange={setRegisterTelegram}
         onLogin={handleLogin}
+        onRegister={handleRegister}
       />
     );
   }
@@ -799,17 +878,37 @@ function App() {
 }
 
 function LoginPage({
-  email,
-  password,
-  onEmailChange,
-  onPasswordChange,
+  mode,
+  loginUsername,
+  loginPassword,
+  registerUsername,
+  registerPassword,
+  registerTelegram,
+  message,
+  onModeChange,
+  onLoginUsernameChange,
+  onLoginPasswordChange,
+  onRegisterUsernameChange,
+  onRegisterPasswordChange,
+  onRegisterTelegramChange,
   onLogin,
+  onRegister,
 }: {
-  email: string;
-  password: string;
-  onEmailChange: (value: string) => void;
-  onPasswordChange: (value: string) => void;
+  mode: "login" | "register";
+  loginUsername: string;
+  loginPassword: string;
+  registerUsername: string;
+  registerPassword: string;
+  registerTelegram: string;
+  message: string;
+  onModeChange: (value: "login" | "register") => void;
+  onLoginUsernameChange: (value: string) => void;
+  onLoginPasswordChange: (value: string) => void;
+  onRegisterUsernameChange: (value: string) => void;
+  onRegisterPasswordChange: (value: string) => void;
+  onRegisterTelegramChange: (value: string) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void;
+  onRegister: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <main className="login-shell">
@@ -846,24 +945,53 @@ function LoginPage({
             </div>
           </div>
 
-          <form className="login-form" onSubmit={onLogin}>
+          <form
+            className="login-form"
+            onSubmit={mode === "login" ? onLogin : onRegister}
+          >
             <div className="login-form-heading">
-              <UserCheck size={24} />
+              {mode === "login" ? <UserCheck size={24} /> : <UserPlus size={24} />}
               <div>
-                <strong>Login demo</strong>
-                <span>Usa i dati già compilati per vedere il pannello.</span>
+                <strong>{mode === "login" ? "Accesso cliente" : "Registrazione"}</strong>
+                <span>
+                  {mode === "login"
+                    ? "Entra con nome utente e password."
+                    : "Crea un cliente con contatto Telegram."}
+                </span>
               </div>
             </div>
 
+            <div className="auth-tabs" role="tablist" aria-label="Accesso">
+              <button
+                className={mode === "login" ? "active" : ""}
+                type="button"
+                onClick={() => onModeChange("login")}
+              >
+                Accedi
+              </button>
+              <button
+                className={mode === "register" ? "active" : ""}
+                type="button"
+                onClick={() => onModeChange("register")}
+              >
+                Registrati
+              </button>
+            </div>
+
             <label className="field">
-              <span>Email cliente</span>
+              <span>Nome utente</span>
               <div className="input-with-icon">
-                <Mail size={18} />
+                <UserCheck size={18} />
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => onEmailChange(event.target.value)}
-                  placeholder="cliente@demo.it"
+                  type="text"
+                  value={mode === "login" ? loginUsername : registerUsername}
+                  onChange={(event) =>
+                    mode === "login"
+                      ? onLoginUsernameChange(event.target.value)
+                      : onRegisterUsernameChange(event.target.value)
+                  }
+                  placeholder="cliente_demo"
+                  autoComplete="username"
                 />
               </div>
             </label>
@@ -874,24 +1002,45 @@ function LoginPage({
                 <KeyRound size={18} />
                 <input
                   type="password"
-                  value={password}
-                  onChange={(event) => onPasswordChange(event.target.value)}
+                  value={mode === "login" ? loginPassword : registerPassword}
+                  onChange={(event) =>
+                    mode === "login"
+                      ? onLoginPasswordChange(event.target.value)
+                      : onRegisterPasswordChange(event.target.value)
+                  }
                   placeholder="demo1234"
+                  autoComplete={
+                    mode === "login" ? "current-password" : "new-password"
+                  }
                 />
               </div>
             </label>
 
+            {mode === "register" && (
+              <label className="field">
+                <span>Contatto Telegram</span>
+                <div className="input-with-icon">
+                  <MessageCircle size={18} />
+                  <input
+                    type="text"
+                    value={registerTelegram}
+                    onChange={(event) =>
+                      onRegisterTelegramChange(event.target.value)
+                    }
+                    placeholder="@tuo_contatto"
+                  />
+                </div>
+              </label>
+            )}
+
             <button className="primary-button full-width" type="submit">
-              <LogIn size={18} />
-              Entra nel pannello
+              {mode === "login" ? <LogIn size={18} /> : <UserPlus size={18} />}
+              {mode === "login" ? "Entra nel pannello" : "Crea account"}
             </button>
 
             <div className="login-demo-note">
               <LockKeyhole size={16} />
-              <span>
-                Questa e una schermata demo: il prossimo step sara collegarla a
-                backend, database e ruoli reali.
-              </span>
+              <span>{message}</span>
             </div>
           </form>
         </div>
