@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
   AudioLines,
@@ -14,7 +14,9 @@ import {
   Headphones,
   KeyRound,
   ListChecks,
+  LogIn,
   LockKeyhole,
+  Mail,
   PhoneForwarded,
   Plus,
   Play,
@@ -23,6 +25,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  UserCheck,
   Users,
   Wallet,
   Zap,
@@ -177,6 +180,9 @@ function useLocalStorage<T>(key: string, initialValue: T) {
 }
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("cliente@demo.it");
+  const [loginPassword, setLoginPassword] = useState("demo1234");
   const [clientName] = useLocalStorage("mia.clientName", "Cliente Demo");
   const [campaigns, setCampaigns] = useLocalStorage<Campaign[]>(
     "mia.campaigns",
@@ -285,6 +291,23 @@ function App() {
     );
   };
 
+  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsAuthenticated(true);
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <LoginPage
+        email={loginEmail}
+        password={loginPassword}
+        onEmailChange={setLoginEmail}
+        onPasswordChange={setLoginPassword}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -355,9 +378,13 @@ function App() {
               <Download size={18} />
               Scarica numeri validi
             </button>
-            <button className="ghost-button" type="button">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => setIsAuthenticated(false)}
+            >
               <KeyRound size={18} />
-              Login demo
+              Esci
             </button>
           </div>
         </section>
@@ -766,6 +793,108 @@ function App() {
             </div>
           </div>
         </section>
+      </section>
+    </main>
+  );
+}
+
+function LoginPage({
+  email,
+  password,
+  onEmailChange,
+  onPasswordChange,
+  onLogin,
+}: {
+  email: string;
+  password: string;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onLogin: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <main className="login-shell">
+      <section className="login-card">
+        <div className="login-brand">
+          <div className="brand-mark">
+            <RadioTower size={24} />
+          </div>
+          <div>
+            <span className="eyebrow neon">MIA VOICE OPS</span>
+            <h1>Accesso pannello IVR</h1>
+          </div>
+        </div>
+
+        <div className="login-grid">
+          <div className="login-copy">
+            <span className="eyebrow">Area clienti</span>
+            <h2>Entra, incolla i numeri e prepara la tua campagna.</h2>
+            <p>
+              Interfaccia semplice per clienti: crediti, liste, IVR, account SIP
+              Zoiper e report in un unico pannello.
+            </p>
+
+            <div className="login-feature-list">
+              <span>
+                <ShieldCheck size={17} /> Consenso e opt-out visibili
+              </span>
+              <span>
+                <Bitcoin size={17} /> Crediti Bitcoin demo
+              </span>
+              <span>
+                <Headphones size={17} /> Trasferimento verso SIP/Zoiper
+              </span>
+            </div>
+          </div>
+
+          <form className="login-form" onSubmit={onLogin}>
+            <div className="login-form-heading">
+              <UserCheck size={24} />
+              <div>
+                <strong>Login demo</strong>
+                <span>Usa i dati già compilati per vedere il pannello.</span>
+              </div>
+            </div>
+
+            <label className="field">
+              <span>Email cliente</span>
+              <div className="input-with-icon">
+                <Mail size={18} />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  placeholder="cliente@demo.it"
+                />
+              </div>
+            </label>
+
+            <label className="field">
+              <span>Password</span>
+              <div className="input-with-icon">
+                <KeyRound size={18} />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  placeholder="demo1234"
+                />
+              </div>
+            </label>
+
+            <button className="primary-button full-width" type="submit">
+              <LogIn size={18} />
+              Entra nel pannello
+            </button>
+
+            <div className="login-demo-note">
+              <LockKeyhole size={16} />
+              <span>
+                Questa e una schermata demo: il prossimo step sara collegarla a
+                backend, database e ruoli reali.
+              </span>
+            </div>
+          </form>
+        </div>
       </section>
     </main>
   );
