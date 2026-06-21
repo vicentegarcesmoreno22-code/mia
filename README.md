@@ -51,9 +51,32 @@ Copia `.env.example` in `.env` e cambia almeno:
 AUTH_TOKEN_SECRET=una-stringa-lunga-casuale
 BTC_RECEIVE_ADDRESS=il-tuo-indirizzo-bitcoin
 BITCOIN_WEBHOOK_SECRET=segreto-webhook
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=password-admin-sicura
+ADMIN_TELEGRAM=@contatto_admin
 ```
 
 Il database locale viene creato in `data/mia.sqlite`.
+
+## Ruoli
+
+- Gli utenti registrati dal pannello sono sempre `client`.
+- Le sezioni tecniche come Asterisk, coda globale, BTCPay e stato sistema sono
+  visibili solo agli utenti `admin`.
+- L'admin viene creato dal server se imposti `ADMIN_USERNAME`,
+  `ADMIN_PASSWORD` e `ADMIN_TELEGRAM` nel `.env`.
+
+## Coda chiamate random
+
+L'admin puo generare una coda globale random:
+
+```http
+GET /api/admin/call-queue?limit=32
+```
+
+La coda prende numeri da campagne `Pronta` di clienti diversi, li mischia e
+restituisce massimo 32 chiamate globali. Questa sara la base da collegare ad
+Asterisk/AMI per originare le chiamate in modo distribuito tra clienti.
 
 ## Ricarica crediti Bitcoin
 

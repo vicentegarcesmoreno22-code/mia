@@ -70,6 +70,22 @@ type BitcoinInvoice = {
   paidAt: string | null;
 };
 
+type AdminOverview = {
+  clients: number;
+  campaigns: number;
+  readyCampaigns: number;
+  totalWalletCredits: string;
+};
+
+type AdminQueueItem = {
+  number: string;
+  client: string;
+  campaignId: string;
+  campaignName: string;
+  sip: string;
+  ivr: string;
+};
+
 type ParsedNumbers = {
   valid: string[];
   duplicates: number;
@@ -197,6 +213,8 @@ function App() {
   const [invoiceMessage, setInvoiceMessage] = useState(
     "Nessuna fattura Bitcoin aperta"
   );
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [adminQueue, setAdminQueue] = useState<AdminQueueItem[]>([]);
   const [numbersInput, setNumbersInput] = useState(
     "3331234567\n+39 347 000 1122\n0039 320 555 0101\n348-555-0199"
   );
@@ -230,6 +248,7 @@ function App() {
     (sum, campaign) => sum + campaign.pressed,
     0
   );
+  const isAdmin = currentUser?.role === "admin";
 
   const handlePrepareCampaign = () => {
     if (!canLaunch) {
@@ -411,6 +430,40 @@ function App() {
     })();
   };
 
+  const loadAdminState = useCallback(async (token: string) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    const [overviewResponse, queueResponse] = await Promise.all([
+      fetch("/api/admin/overview", { headers }),
+      fetch("/api/admin/call-queue?limit=32", { headers }),
+    ]);
+
+    if (overviewResponse.ok) {
+      const body = (await overviewResponse.json()) as {
+        overview: AdminOverview;
+      };
+      setAdminOverview(body.overview);
+    }
+
+    if (queueResponse.ok) {
+      const body = (await queueResponse.json()) as {
+        queue: AdminQueueItem[];
+      };
+      setAdminQueue(body.queue);
+    }
+  }, []);
+
+  const handleRandomizeCallQueue = () => {
+    if (!authToken) {
+      return;
+    }
+
+    void (async () => {
+      setActionMessage("Genero coda chiamate random mischiando clienti diversi...");
+      await loadAdminState(authToken);
+      setActionMessage("Coda chiamate random aggiornata. Verranno usate massimo 32 chiamate globali.");
+    })();
+  };
+
   const loadServerState = useCallback(async (token: string) => {
     const headers = { Authorization: `Bearer ${token}` };
     const [campaignsResponse, sipResponse, walletResponse, invoicesResponse] =
@@ -470,10 +523,17 @@ function App() {
       setCurrentUser(body.user);
       setClientName(body.user.username);
       await loadServerState(authToken);
+      if (body.user.role === "admin") {
+        await loadAdminState(authToken);
+      } else {
+        setAdminOverview(null);
+        setAdminQueue([]);
+      }
       setIsAuthenticated(true);
     })();
   }, [
     authToken,
+    loadAdminState,
     loadServerState,
     setAuthToken,
     setCampaigns,
@@ -505,6 +565,9 @@ function App() {
       setClientName(body.user.username);
       setAuthMessage(`Accesso effettuato come ${body.user.username}.`);
       await loadServerState(body.token);
+      if (body.user.role === "admin") {
+        await loadAdminState(body.token);
+      }
       setIsAuthenticated(true);
     })();
   };
@@ -601,10 +664,12 @@ function App() {
             <BarChart3 size={18} />
             Report
           </a>
-          <a className="nav-item" href="#system">
-            <ServerCog size={18} />
-            Sistema
-          </a>
+          {isAdmin && (
+            <a className="nav-item" href="#system">
+              <ServerCog size={18} />
+              Admin
+            </a>
+          )}
         </nav>
 
         <div className="sidebar-card">
@@ -646,6 +711,8 @@ function App() {
                 setSipList([]);
                 setWalletBalance("0.00");
                 setCurrentInvoice(null);
+                setAdminOverview(null);
+                setAdminQueue([]);
                 setActionMessage("Sessione chiusa.");
                 setIsAuthenticated(false);
               }}
@@ -1134,34 +1201,89 @@ function App() {
             </div>
           </div>
 
-          <div className="panel system-panel" id="system">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">Prossime integrazioni</span>
-                <h3>Stato sistema</h3>
+          {isAdmin && (
+            <div className="panel system-panel" id="system">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Area admin</span>
+                  <h3>Sistema e coda globale</h3>
+                </div>
+                <ServerCog size={22} />
               </div>
-              <ServerCog size={22} />
+
+              <div className="admin-overview">
+                <SummaryItem label="Clienti" value={adminOverview?.clients ?? 0} />
+                <SummaryItem
+                  label="Campagne"
+                  value={adminOverview?.campaigns ?? 0}
+                />
+                <SummaryItem
+                  label="Pronte"
+                  value={adminOverview?.readyCampaigns ?? 0}
+                />
+              </div>
+
+              <button
+                className="primary-button full-width"
+                type="button"
+                onClick={handleRandomizeCallQueue}
+              >
+                <Zap size={18} />
+                Mischia chiamate clienti
+              </button>
+
+              <div className="admin-queue">
+                <div className="panel-heading compact">
+                  <div>
+                    <span className="eyebrow">Max 32 globali</span>
+                    <h3>Coda random</h3>
+                  </div>
+                  <StatusPill label={`${adminQueue.length} chiamate`} />
+                </div>
+                {adminQueue.map((item, index) => (
+                  <div
+                    className="queue-row"
+                    key={`${item.campaignId}-${item.number}-${index}`}
+                  >
+                    <strong>#{index + 1} {item.number}</strong>
+                    <span>
+                      Cliente: {item.client} - Campagna: {item.campaignName}
+                    </span>
+                    <small>
+                      SIP: {item.sip} - IVR: {item.ivr}
+                    </small>
+                  </div>
+                ))}
+                {adminQueue.length === 0 && (
+                  <div className="empty-state">
+                    Nessuna chiamata in coda. Servono campagne pronte con numeri
+                    caricati dai clienti.
+                  </div>
+                )}
+              </div>
+
+              <div className="integration-grid">
+                <IntegrationItem
+                  title="Frontend clienti"
+                  detail="Visibile ai clienti senza dettagli Asterisk, gateway o BTCPay."
+                  done
+                />
+                <IntegrationItem
+                  title="Coda chiamate random"
+                  detail="Admin vede una coda mischiata tra campagne di clienti diversi, massimo 32 chiamate globali."
+                  done
+                />
+                <IntegrationItem
+                  title="Asterisk AMI/ARI"
+                  detail="Solo admin: qui andra collegata l'origine reale delle chiamate e il limite canali."
+                />
+                <IntegrationItem
+                  title="BTCPay Server"
+                  detail="Solo admin: qui andra collegato il webhook reale per confermare i pagamenti."
+                />
+              </div>
             </div>
-            <div className="integration-grid">
-              <IntegrationItem
-                title="Frontend clienti"
-                detail="Creato: dashboard, numeri, IVR, SIP, crediti e report."
-                done
-              />
-              <IntegrationItem
-                title="Backend/API"
-                detail="Da collegare: utenti reali, database, permessi e salvataggio server."
-              />
-              <IntegrationItem
-                title="Asterisk AMI/ARI"
-                detail="Da collegare: origination chiamate, DTMF 1, limiti 32 canali e CDR."
-              />
-              <IntegrationItem
-                title="BTCPay Server"
-                detail="Da collegare: fatture Bitcoin, webhook e accredito automatico."
-              />
-            </div>
-          </div>
+          )}
         </section>
       </section>
     </main>

@@ -1362,6 +1362,65 @@ a {
   gap: 12px;
 }
 
+.admin-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.admin-overview > div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(53, 255, 157, 0.05);
+}
+
+.admin-overview strong,
+.admin-overview span {
+  display: block;
+}
+
+.admin-overview strong {
+  font-size: 1.35rem;
+}
+
+.admin-overview span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-queue {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.panel-heading.compact {
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.queue-row {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.queue-row strong,
+.queue-row span,
+.queue-row small {
+  display: block;
+}
+
+.queue-row span,
+.queue-row small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .integration-item {
   display: flex;
   gap: 12px;

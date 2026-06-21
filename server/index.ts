@@ -58,6 +58,11 @@ type InvoiceRow = {
   paid_at: string | null;
 };
 
+type QueueCampaignRow = CampaignRow & {
+  user_id: number;
+  client_username: string;
+};
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 const dataDirectory = process.env.DATA_DIR ?? join(projectRoot, "data");
@@ -66,6 +71,9 @@ const jwtSecret =
   process.env.AUTH_TOKEN_SECRET ?? "dev-secret-change-me-before-production";
 const btcReceiveAddress = process.env.BTC_RECEIVE_ADDRESS ?? "";
 const bitcoinWebhookSecret = process.env.BITCOIN_WEBHOOK_SECRET ?? "";
+const adminUsername = process.env.ADMIN_USERNAME?.trim() ?? "";
+const adminPassword = process.env.ADMIN_PASSWORD ?? "";
+const adminTelegram = process.env.ADMIN_TELEGRAM?.trim() || "@admin";
 const port = Number(process.env.API_PORT ?? 4000);
 
 mkdirSync(dataDirectory, { recursive: true });
@@ -165,6 +173,40 @@ function walletForUser(userId: number) {
 
 function formatCredits(cents: number) {
   return (cents / 100).toFixed(2);
+}
+
+function bootstrapAdminFromEnv() {
+  if (!adminUsername || !adminPassword) {
+    return;
+  }
+
+  const existingUser = userSelect.get(adminUsername) as UserRow | undefined;
+  if (existingUser) {
+    if (existingUser.role !== "admin") {
+      db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(existingUser.id);
+    }
+    ensureWallet(existingUser.id);
+    return;
+  }
+
+  const passwordHash = bcrypt.hashSync(adminPassword, 12);
+  const result = insertUser.run({
+    username: adminUsername,
+    passwordHash,
+    telegram: adminTelegram,
+    role: "admin",
+  });
+
+  ensureWallet(Number(result.lastInsertRowid));
+}
+
+function shuffle<T>(items: T[]) {
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
+  }
+  return copy;
 }
 
 function publicUser(user: UserRow): AuthUser {
@@ -296,6 +338,28 @@ function requireAuth(
   next();
 }
 
+function requireAdmin(
+  request: express.Request,
+  response: express.Response,
+  next: express.NextFunction
+) {
+  const user = getAuthUser(request);
+  if (!user) {
+    response.status(401).json({ error: "Non autorizzato" });
+    return;
+  }
+
+  if (user.role !== "admin") {
+    response.status(403).json({ error: "Solo admin" });
+    return;
+  }
+
+  response.locals.user = user;
+  next();
+}
+
+bootstrapAdminFromEnv();
+
 app.get("/api/health", (_request, response) => {
   response.json({
     ok: true,
@@ -368,6 +432,106 @@ app.get("/api/wallet", requireAuth, (_request, response) => {
       balanceCredits: formatCredits(wallet.balance_cents),
       balanceCents: wallet.balance_cents,
     },
+  });
+});
+
+app.get("/api/admin/overview", requireAdmin, (_request, response) => {
+  const clients = db
+    .prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'client'")
+    .get() as { count: number };
+  const campaigns = db
+    .prepare("SELECT COUNT(*) AS count FROM campaigns")
+    .get() as { count: number };
+  const readyCampaigns = db
+    .prepare("SELECT COUNT(*) AS count FROM campaigns WHERE status = 'Pronta'")
+    .get() as { count: number };
+  const wallets = db
+    .prepare("SELECT COALESCE(SUM(balance_cents), 0) AS total FROM wallets")
+    .get() as { total: number };
+
+  response.json({
+    overview: {
+      clients: clients.count,
+      campaigns: campaigns.count,
+      readyCampaigns: readyCampaigns.count,
+      totalWalletCredits: formatCredits(wallets.total),
+    },
+  });
+});
+
+app.get("/api/admin/call-queue", requireAdmin, (request, response) => {
+  const limit = Math.min(
+    Math.max(Number(request.query.limit ?? 32), 1),
+    32
+  );
+
+  const campaigns = db
+    .prepare(
+      `SELECT
+        campaigns.id,
+        campaigns.user_id,
+        campaigns.name,
+        campaigns.status,
+        campaigns.progress,
+        campaigns.pressed,
+        campaigns.total,
+        campaigns.sip,
+        campaigns.ivr,
+        campaigns.numbers_json,
+        campaigns.created_at,
+        users.username AS client_username
+       FROM campaigns
+       INNER JOIN users ON users.id = campaigns.user_id
+       WHERE campaigns.status = 'Pronta'
+       ORDER BY campaigns.created_at ASC`
+    )
+    .all() as QueueCampaignRow[];
+
+  const pools = campaigns
+    .map((campaign) => {
+      try {
+        const numbers = JSON.parse(campaign.numbers_json) as string[];
+        return {
+          campaign,
+          numbers: shuffle(numbers),
+        };
+      } catch {
+        return {
+          campaign,
+          numbers: [],
+        };
+      }
+    })
+    .filter((pool) => pool.numbers.length > 0);
+
+  const queue = [];
+  const activePools = [...pools];
+
+  while (queue.length < limit && activePools.length > 0) {
+    const poolIndex = Math.floor(Math.random() * activePools.length);
+    const pool = activePools[poolIndex];
+    const number = pool.numbers.shift();
+
+    if (number) {
+      queue.push({
+        number,
+        client: pool.campaign.client_username,
+        campaignId: pool.campaign.id,
+        campaignName: pool.campaign.name,
+        sip: pool.campaign.sip,
+        ivr: pool.campaign.ivr,
+      });
+    }
+
+    if (pool.numbers.length === 0) {
+      activePools.splice(poolIndex, 1);
+    }
+  }
+
+  response.json({
+    queue,
+    availableCampaigns: pools.length,
+    limit,
   });
 });
 
