@@ -51,9 +51,11 @@ type SipAccountRow = {
 type InvoiceRow = {
   id: string;
   amount_btc: string;
+  credit_amount_cents: number;
   btc_address: string;
   status: "pending" | "paid";
   created_at: string;
+  paid_at: string | null;
 };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +65,7 @@ const databasePath = process.env.DATABASE_PATH ?? join(dataDirectory, "mia.sqlit
 const jwtSecret =
   process.env.AUTH_TOKEN_SECRET ?? "dev-secret-change-me-before-production";
 const btcReceiveAddress = process.env.BTC_RECEIVE_ADDRESS ?? "";
+const bitcoinWebhookSecret = process.env.BITCOIN_WEBHOOK_SECRET ?? "";
 const port = Number(process.env.API_PORT ?? 4000);
 
 mkdirSync(dataDirectory, { recursive: true });
@@ -110,12 +113,34 @@ db.exec(`
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     amount_btc TEXT NOT NULL,
+    credit_amount_cents INTEGER NOT NULL DEFAULT 0,
     btc_address TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    paid_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS wallets (
+    user_id INTEGER PRIMARY KEY,
+    balance_cents INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
+
+function ensureColumn(tableName: string, columnName: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as {
+    name: string;
+  }[];
+
+  if (!columns.some((column) => column.name === columnName)) {
+    db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+  }
+}
+
+ensureColumn("bitcoin_invoices", "credit_amount_cents", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("bitcoin_invoices", "paid_at", "TEXT");
 
 const userSelect = db.prepare("SELECT * FROM users WHERE username = ?");
 const userByIdSelect = db.prepare("SELECT * FROM users WHERE id = ?");
@@ -123,6 +148,24 @@ const insertUser = db.prepare(`
   INSERT INTO users (username, password_hash, telegram, role)
   VALUES (@username, @passwordHash, @telegram, @role)
 `);
+
+function ensureWallet(userId: number) {
+  db.prepare(
+    `INSERT OR IGNORE INTO wallets (user_id, balance_cents, updated_at)
+     VALUES (?, 0, ?)`
+  ).run(userId, new Date().toISOString());
+}
+
+function walletForUser(userId: number) {
+  ensureWallet(userId);
+  return db
+    .prepare("SELECT balance_cents FROM wallets WHERE user_id = ?")
+    .get(userId) as { balance_cents: number };
+}
+
+function formatCredits(cents: number) {
+  return (cents / 100).toFixed(2);
+}
 
 function publicUser(user: UserRow): AuthUser {
   return {
@@ -211,6 +254,22 @@ const sipSchema = z.object({
 
 const invoiceSchema = z.object({
   amountBtc: z.string().trim().regex(/^\d+(\.\d{1,8})?$/, "Importo BTC non valido"),
+  creditAmount: z
+    .number()
+    .min(1, "Importo crediti troppo basso")
+    .max(100000, "Importo crediti troppo alto"),
+});
+const bitcoinPaidStatuses = new Set([
+  "paid",
+  "settled",
+  "confirmed",
+  "complete",
+  "completed",
+]);
+
+const webhookSchema = z.object({
+  invoiceId: z.string().trim().min(3),
+  status: z.string().trim().min(2),
 });
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? true }));
@@ -266,6 +325,7 @@ app.post("/api/auth/register", (request, response) => {
   });
 
   const user = userByIdSelect.get(result.lastInsertRowid) as UserRow;
+  ensureWallet(user.id);
   const authUser = publicUser(user);
 
   response.status(201).json({
@@ -287,6 +347,7 @@ app.post("/api/auth/login", (request, response) => {
     return;
   }
 
+  ensureWallet(user.id);
   const authUser = publicUser(user);
   response.json({
     token: createToken(authUser),
@@ -296,6 +357,18 @@ app.post("/api/auth/login", (request, response) => {
 
 app.get("/api/me", requireAuth, (_request, response) => {
   response.json({ user: response.locals.user as AuthUser });
+});
+
+app.get("/api/wallet", requireAuth, (_request, response) => {
+  const user = response.locals.user as AuthUser;
+  const wallet = walletForUser(user.id);
+
+  response.json({
+    wallet: {
+      balanceCredits: formatCredits(wallet.balance_cents),
+      balanceCents: wallet.balance_cents,
+    },
+  });
 });
 
 app.get("/api/campaigns", requireAuth, (_request, response) => {
@@ -419,7 +492,7 @@ app.get("/api/invoices", requireAuth, (_request, response) => {
   const user = response.locals.user as AuthUser;
   const invoices = db
     .prepare(
-      `SELECT id, amount_btc, btc_address, status, created_at
+      `SELECT id, amount_btc, credit_amount_cents, btc_address, status, created_at, paid_at
        FROM bitcoin_invoices
        WHERE user_id = ?
        ORDER BY created_at DESC`
@@ -430,9 +503,11 @@ app.get("/api/invoices", requireAuth, (_request, response) => {
     invoices: invoices.map((invoice) => ({
       id: invoice.id,
       amountBtc: invoice.amount_btc,
+      creditAmount: formatCredits(invoice.credit_amount_cents),
       btcAddress: invoice.btc_address,
       status: invoice.status,
       createdAt: invoice.created_at,
+      paidAt: invoice.paid_at,
     })),
   });
 });
@@ -454,16 +529,18 @@ app.post("/api/invoices", requireAuth, (request, response) => {
   const user = response.locals.user as AuthUser;
   const id = `BTC-${randomUUID().slice(0, 8).toUpperCase()}`;
   const createdAt = new Date().toISOString();
+  const creditAmountCents = Math.round(parsed.data.creditAmount * 100);
 
   db.prepare(
     `INSERT INTO bitcoin_invoices
-      (id, user_id, amount_btc, btc_address, status, created_at)
+      (id, user_id, amount_btc, credit_amount_cents, btc_address, status, created_at)
      VALUES
-      (@id, @userId, @amountBtc, @btcAddress, 'pending', @createdAt)`
+      (@id, @userId, @amountBtc, @creditAmountCents, @btcAddress, 'pending', @createdAt)`
   ).run({
     id,
     userId: user.id,
     amountBtc: parsed.data.amountBtc,
+    creditAmountCents,
     btcAddress: btcReceiveAddress,
     createdAt,
   });
@@ -472,10 +549,80 @@ app.post("/api/invoices", requireAuth, (request, response) => {
     invoice: {
       id,
       amountBtc: parsed.data.amountBtc,
+      creditAmount: formatCredits(creditAmountCents),
       btcAddress: btcReceiveAddress,
       status: "pending",
       createdAt,
+      paidAt: null,
     },
+  });
+});
+
+app.post("/api/webhooks/bitcoin", (request, response) => {
+  if (bitcoinWebhookSecret) {
+    const providedSecret = request.header("x-webhook-secret") ?? "";
+    if (providedSecret !== bitcoinWebhookSecret) {
+      response.status(401).json({ error: "Webhook non autorizzato" });
+      return;
+    }
+  }
+
+  const parsed = webhookSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: parsed.error.issues[0]?.message });
+    return;
+  }
+
+  const normalizedStatus = parsed.data.status.toLowerCase();
+  if (!bitcoinPaidStatuses.has(normalizedStatus)) {
+    response.json({ ok: true, credited: false, reason: "Pagamento non confermato" });
+    return;
+  }
+
+  const invoice = db
+    .prepare(
+      `SELECT id, user_id, amount_btc, credit_amount_cents, btc_address, status, created_at, paid_at
+       FROM bitcoin_invoices
+       WHERE id = ?`
+    )
+    .get(parsed.data.invoiceId) as (InvoiceRow & { user_id: number }) | undefined;
+
+  if (!invoice) {
+    response.status(404).json({ error: "Fattura non trovata" });
+    return;
+  }
+
+  if (invoice.status === "paid") {
+    response.json({ ok: true, credited: false, reason: "Fattura gia pagata" });
+    return;
+  }
+
+  const paidAt = new Date().toISOString();
+  const creditInvoice = db.transaction(() => {
+    db.prepare(
+      `UPDATE bitcoin_invoices
+       SET status = 'paid', paid_at = ?
+       WHERE id = ? AND status = 'pending'`
+    ).run(paidAt, invoice.id);
+
+    ensureWallet(invoice.user_id);
+    db.prepare(
+      `UPDATE wallets
+       SET balance_cents = balance_cents + ?, updated_at = ?
+       WHERE user_id = ?`
+    ).run(invoice.credit_amount_cents, paidAt, invoice.user_id);
+
+    return walletForUser(invoice.user_id);
+  });
+
+  const wallet = creditInvoice();
+
+  response.json({
+    ok: true,
+    credited: true,
+    invoiceId: invoice.id,
+    creditedCredits: formatCredits(invoice.credit_amount_cents),
+    balanceCredits: formatCredits(wallet.balance_cents),
   });
 });
 

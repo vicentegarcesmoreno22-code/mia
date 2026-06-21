@@ -22,7 +22,9 @@ Prima versione del pannello web per campagne IVR multi-cliente.
 - Database SQLite locale.
 - Registrazione/login reali con password hashata.
 - Token autenticazione per chiamare API campagne e SIP.
-- Generazione fatture Bitcoin con indirizzo configurato da ambiente.
+- Wallet crediti cliente.
+- Generazione fatture Bitcoin collegate a crediti da accreditare.
+- Webhook Bitcoin/BTCPay per segnare la fattura pagata e ricaricare il saldo.
 
 ## Comandi
 
@@ -48,6 +50,30 @@ Copia `.env.example` in `.env` e cambia almeno:
 ```text
 AUTH_TOKEN_SECRET=una-stringa-lunga-casuale
 BTC_RECEIVE_ADDRESS=il-tuo-indirizzo-bitcoin
+BITCOIN_WEBHOOK_SECRET=segreto-webhook
 ```
 
 Il database locale viene creato in `data/mia.sqlite`.
+
+## Ricarica crediti Bitcoin
+
+1. Il cliente inserisce quanti crediti vuole ricaricare.
+2. Il pannello genera una fattura BTC.
+3. Quando il pagamento viene confermato dal processore Bitcoin, chiama:
+
+```http
+POST /api/webhooks/bitcoin
+X-Webhook-Secret: segreto-webhook
+Content-Type: application/json
+
+{
+  "invoiceId": "BTC-XXXXXXXX",
+  "status": "paid"
+}
+```
+
+Stati accettati come pagamento confermato: `paid`, `settled`, `confirmed`,
+`complete`, `completed`.
+
+Quando il webhook arriva, il backend marca la fattura come pagata e aggiunge i
+crediti al wallet del cliente una sola volta.

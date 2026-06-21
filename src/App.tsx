@@ -63,9 +63,11 @@ type ApiUser = {
 type BitcoinInvoice = {
   id: string;
   amountBtc: string;
+  creditAmount: string;
   btcAddress: string;
   status: "pending" | "paid";
   createdAt: string;
+  paidAt: string | null;
 };
 
 type ParsedNumbers = {
@@ -186,6 +188,9 @@ function App() {
   const [currentInvoice, setCurrentInvoice] = useState<BitcoinInvoice | null>(
     null
   );
+  const [walletBalance, setWalletBalance] = useState("0.00");
+  const [rechargeCredits, setRechargeCredits] = useState("10.00");
+  const [rechargeBtc, setRechargeBtc] = useState("0.001");
   const [invoiceMessage, setInvoiceMessage] = useState(
     "Nessuna fattura Bitcoin aperta"
   );
@@ -312,13 +317,22 @@ function App() {
   const handleCreateInvoice = () => {
     void (async () => {
       setInvoiceMessage("Generazione fattura in corso...");
+      const creditAmount = Number(rechargeCredits);
+      if (!Number.isFinite(creditAmount) || creditAmount <= 0) {
+        setInvoiceMessage("Inserisci un importo crediti valido.");
+        return;
+      }
+
       const response = await fetch("/api/invoices", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ amountBtc: "0.001" }),
+        body: JSON.stringify({
+          amountBtc: rechargeBtc,
+          creditAmount,
+        }),
       });
 
       if (!response.ok) {
@@ -342,11 +356,25 @@ function App() {
     setInvoiceMessage("Indirizzo BTC copiato negli appunti.");
   };
 
+  const handleRefreshPayments = () => {
+    if (!authToken) {
+      return;
+    }
+
+    void (async () => {
+      await loadServerState(authToken);
+      setInvoiceMessage("Saldo e fatture aggiornati.");
+    })();
+  };
+
   const loadServerState = useCallback(async (token: string) => {
     const headers = { Authorization: `Bearer ${token}` };
-    const [campaignsResponse, sipResponse] = await Promise.all([
+    const [campaignsResponse, sipResponse, walletResponse, invoicesResponse] =
+      await Promise.all([
       fetch("/api/campaigns", { headers }),
       fetch("/api/sip-accounts", { headers }),
+      fetch("/api/wallet", { headers }),
+      fetch("/api/invoices", { headers }),
     ]);
 
     if (campaignsResponse.ok) {
@@ -358,6 +386,20 @@ function App() {
       const body = (await sipResponse.json()) as { accounts: SipAccount[] };
       setSipList(body.accounts);
       setSelectedSip(body.accounts[0]?.username ?? "");
+    }
+
+    if (walletResponse.ok) {
+      const body = (await walletResponse.json()) as {
+        wallet: { balanceCredits: string };
+      };
+      setWalletBalance(body.wallet.balanceCredits);
+    }
+
+    if (invoicesResponse.ok) {
+      const body = (await invoicesResponse.json()) as {
+        invoices: BitcoinInvoice[];
+      };
+      setCurrentInvoice(body.invoices[0] ?? null);
     }
   }, [setCampaigns, setSipList]);
 
@@ -559,6 +601,8 @@ function App() {
                 setCurrentUser(null);
                 setCampaigns([]);
                 setSipList([]);
+                setWalletBalance("0.00");
+                setCurrentInvoice(null);
                 setIsAuthenticated(false);
               }}
             >
@@ -865,9 +909,29 @@ function App() {
               <Bitcoin size={22} />
             </div>
             <div className="btc-card">
-              <span>Wallet cliente</span>
-              <strong>0.018 BTC</strong>
+              <span>Saldo crediti</span>
+              <strong>{walletBalance}</strong>
               <small>{invoiceMessage}</small>
+            </div>
+            <div className="recharge-grid">
+              <label className="field">
+                <span>Crediti da ricaricare</span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={rechargeCredits}
+                  onChange={(event) => setRechargeCredits(event.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>Importo BTC</span>
+                <input
+                  type="text"
+                  value={rechargeBtc}
+                  onChange={(event) => setRechargeBtc(event.target.value)}
+                />
+              </label>
             </div>
             {currentInvoice && (
               <div className="invoice-card">
@@ -887,7 +951,11 @@ function App() {
                 </div>
                 <div className="invoice-grid">
                   <div>
-                    <span>Importo</span>
+                    <span>Crediti</span>
+                    <strong>{currentInvoice.creditAmount}</strong>
+                  </div>
+                  <div>
+                    <span>Pagamento</span>
                     <strong>{currentInvoice.amountBtc} BTC</strong>
                   </div>
                   <div>
@@ -896,6 +964,14 @@ function App() {
                       {new Date(currentInvoice.createdAt).toLocaleString("it-IT")}
                     </strong>
                   </div>
+                  {currentInvoice.paidAt && (
+                    <div>
+                      <span>Pagata</span>
+                      <strong>
+                        {new Date(currentInvoice.paidAt).toLocaleString("it-IT")}
+                      </strong>
+                    </div>
+                  )}
                 </div>
                 <div className="invoice-address">
                   <span>Indirizzo BTC</span>
@@ -929,6 +1005,14 @@ function App() {
             >
               <Bitcoin size={18} />
               Genera fattura BTC
+            </button>
+            <button
+              className="ghost-button full-width"
+              type="button"
+              onClick={handleRefreshPayments}
+            >
+              <Wallet size={18} />
+              Verifica pagamento e aggiorna crediti
             </button>
           </div>
 
