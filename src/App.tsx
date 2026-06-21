@@ -52,10 +52,11 @@ type Campaign = {
   createdAt: string;
 };
 
-type RegisteredUser = {
+type ApiUser = {
+  id: number;
   username: string;
-  password: string;
   telegram: string;
+  role: "client" | "admin";
 };
 
 type ParsedNumbers = {
@@ -114,14 +115,6 @@ const defaultCampaigns: Campaign[] = [
     sip: "cliente01-milano",
     ivr: "business.mp3",
     createdAt: "20/06/2026, 18:05",
-  },
-];
-
-const defaultRegisteredUsers: RegisteredUser[] = [
-  {
-    username: "cliente_demo",
-    password: "demo1234",
-    telegram: "@cliente_demo",
   },
 ];
 
@@ -194,8 +187,18 @@ function useLocalStorage<T>(key: string, initialValue: T) {
   return [value, setValue] as const;
 }
 
+async function readApiError(response: Response) {
+  try {
+    const body = (await response.json()) as { error?: string };
+    return body.error ?? "Errore API";
+  } catch {
+    return "Errore API";
+  }
+}
+
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authToken, setAuthToken] = useLocalStorage("mia.authToken", "");
+  const [isAuthenticated, setIsAuthenticated] = useState(Boolean(authToken));
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [loginUsername, setLoginUsername] = useState("cliente_demo");
   const [loginPassword, setLoginPassword] = useState("demo1234");
@@ -209,9 +212,10 @@ function App() {
     "mia.clientName",
     "Cliente Demo"
   );
-  const [registeredUsers, setRegisteredUsers] = useLocalStorage<
-    RegisteredUser[]
-  >("mia.registeredUsers", defaultRegisteredUsers);
+  const [currentUser, setCurrentUser] = useLocalStorage<ApiUser | null>(
+    "mia.currentUser",
+    null
+  );
   const [campaigns, setCampaigns] = useLocalStorage<Campaign[]>(
     "mia.campaigns",
     defaultCampaigns
@@ -263,36 +267,66 @@ function App() {
       return;
     }
 
-    const newCampaign: Campaign = {
-      id: `camp-${Date.now()}`,
-      name: campaignName.trim() || "Campagna senza nome",
-      status: "Pronta",
-      progress: 0,
-      pressed: 0,
-      total: parsedNumbers.valid.length,
-      sip: selectedSipTarget,
-      ivr:
-        ivrFileName !== "Nessun file selezionato"
-          ? ivrFileName
-          : `TTS ${estimatedSeconds}s`,
-      createdAt: new Date().toLocaleString("it-IT"),
-    };
+    void (async () => {
+      const payload = {
+        name: campaignName.trim() || "Campagna senza nome",
+        total: parsedNumbers.valid.length,
+        sip: selectedSipTarget,
+        ivr:
+          ivrFileName !== "Nessun file selezionato"
+            ? ivrFileName
+            : `TTS ${estimatedSeconds}s`,
+        numbers: parsedNumbers.valid,
+      };
 
-    setCampaigns([newCampaign, ...campaigns]);
+      const response = await fetch("/api/campaigns", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        setInvoiceMessage(await readApiError(response));
+        return;
+      }
+
+      const body = (await response.json()) as { campaign: Campaign };
+      setCampaigns([body.campaign, ...campaigns]);
+      setInvoiceMessage("Campagna salvata nel database.");
+    })();
   };
 
   const handleGenerateSip = () => {
     const nextNumber = sipList.length + 1;
-    const newAccount: SipAccount = {
-      id: `sip-${Date.now()}`,
+    const newAccount = {
       name: `Operatore ${nextNumber}`,
       username: `cliente01-operatore${nextNumber}`,
       password: `sip-${Math.random().toString(36).slice(2, 10)}`,
-      status: "offline",
     };
 
-    setSipList([...sipList, newAccount]);
-    setSelectedSip(newAccount.username);
+    void (async () => {
+      const response = await fetch("/api/sip-accounts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(newAccount),
+      });
+
+      if (!response.ok) {
+        setInvoiceMessage(await readApiError(response));
+        return;
+      }
+
+      const body = (await response.json()) as { account: SipAccount };
+      setSipList([...sipList, body.account]);
+      setSelectedSip(body.account.username);
+      setInvoiceMessage("Account SIP salvato nel database.");
+    })();
   };
 
   const handleDownloadNumbers = () => {
@@ -319,50 +353,82 @@ function App() {
     );
   };
 
-  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const matchingUser = registeredUsers.find(
-      (user) =>
-        user.username === loginUsername.trim() && user.password === loginPassword
-    );
+  const loadServerState = async (token: string) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    const [campaignsResponse, sipResponse] = await Promise.all([
+      fetch("/api/campaigns", { headers }),
+      fetch("/api/sip-accounts", { headers }),
+    ]);
 
-    if (!matchingUser) {
-      setAuthMessage("Username o password non corretti.");
-      return;
+    if (campaignsResponse.ok) {
+      const body = (await campaignsResponse.json()) as { campaigns: Campaign[] };
+      setCampaigns(body.campaigns);
     }
 
-    setClientName(matchingUser.username);
-    setAuthMessage(`Accesso effettuato come ${matchingUser.username}.`);
-    setIsAuthenticated(true);
+    if (sipResponse.ok) {
+      const body = (await sipResponse.json()) as { accounts: SipAccount[] };
+      setSipList(body.accounts);
+      setSelectedSip(body.accounts[0]?.username ?? "");
+    }
+  };
+
+  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void (async () => {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: loginUsername.trim(),
+          password: loginPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        setAuthMessage(await readApiError(response));
+        return;
+      }
+
+      const body = (await response.json()) as { token: string; user: ApiUser };
+      setAuthToken(body.token);
+      setCurrentUser(body.user);
+      setClientName(body.user.username);
+      setAuthMessage(`Accesso effettuato come ${body.user.username}.`);
+      await loadServerState(body.token);
+      setIsAuthenticated(true);
+    })();
   };
 
   const handleRegister = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const username = registerUsername.trim();
-    const telegram = registerTelegram.trim();
+    void (async () => {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: registerUsername.trim(),
+          password: registerPassword,
+          telegram: registerTelegram.trim(),
+        }),
+      });
 
-    if (!username || !registerPassword || !telegram) {
-      setAuthMessage("Compila username, password e contatto Telegram.");
-      return;
-    }
+      if (!response.ok) {
+        setAuthMessage(await readApiError(response));
+        return;
+      }
 
-    if (registeredUsers.some((user) => user.username === username)) {
-      setAuthMessage("Questo username esiste gia. Scegline un altro.");
-      return;
-    }
-
-    const newUser: RegisteredUser = {
-      username,
-      password: registerPassword,
-      telegram,
-    };
-
-    setRegisteredUsers([...registeredUsers, newUser]);
-    setClientName(username);
-    setLoginUsername(username);
-    setLoginPassword(registerPassword);
-    setAuthMessage(`Registrazione completata. Telegram salvato: ${telegram}.`);
-    setIsAuthenticated(true);
+      const body = (await response.json()) as { token: string; user: ApiUser };
+      setAuthToken(body.token);
+      setCurrentUser(body.user);
+      setClientName(body.user.username);
+      setLoginUsername(body.user.username);
+      setLoginPassword(registerPassword);
+      setAuthMessage(
+        `Registrazione completata. Telegram salvato: ${body.user.telegram}.`
+      );
+      await loadServerState(body.token);
+      setIsAuthenticated(true);
+    })();
   };
 
   if (!isAuthenticated) {
@@ -445,7 +511,11 @@ function App() {
           <div>
             <span className="eyebrow">Accesso demo</span>
             <strong>{clientName}</strong>
-            <small>Ruolo: cliente - Piano: 32 canali condivisi</small>
+            <small>
+              Ruolo: {currentUser?.role ?? "client"} - Telegram:{" "}
+              {currentUser?.telegram ?? "non impostato"} - Piano: 32 canali
+              condivisi
+            </small>
           </div>
           <div className="top-strip-actions">
             <button
@@ -460,7 +530,11 @@ function App() {
             <button
               className="ghost-button"
               type="button"
-              onClick={() => setIsAuthenticated(false)}
+              onClick={() => {
+                setAuthToken("");
+                setCurrentUser(null);
+                setIsAuthenticated(false);
+              }}
             >
               <KeyRound size={18} />
               Esci
