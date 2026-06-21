@@ -1,18 +1,25 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Activity,
   AudioLines,
+  BarChart3,
   Bitcoin,
   Bot,
+  CalendarClock,
   CheckCircle2,
   ClipboardPaste,
+  Download,
+  FileText,
   Headphones,
+  KeyRound,
   ListChecks,
   LockKeyhole,
   PhoneForwarded,
+  Plus,
   Play,
   RadioTower,
+  ServerCog,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -22,9 +29,23 @@ import {
 } from "lucide-react";
 
 type SipAccount = {
+  id: string;
   name: string;
   username: string;
+  password: string;
   status: "online" | "offline";
+};
+
+type Campaign = {
+  id: string;
+  name: string;
+  status: "Pronta" | "In pausa" | "Completata";
+  progress: number;
+  pressed: number;
+  total: number;
+  sip: string;
+  ivr: string;
+  createdAt: string;
 };
 
 type ParsedNumbers = {
@@ -33,37 +54,56 @@ type ParsedNumbers = {
   rejected: string[];
 };
 
-const sipAccounts: SipAccount[] = [
+const defaultSipAccounts: SipAccount[] = [
   {
+    id: "sip-1",
     name: "Operatore Milano",
     username: "cliente01-milano",
+    password: "zoiper-demo-92K",
     status: "online",
   },
   {
+    id: "sip-2",
     name: "Operatore Roma",
     username: "cliente01-roma",
+    password: "zoiper-demo-41Q",
     status: "offline",
   },
 ];
 
-const recentCampaigns = [
+const defaultCampaigns: Campaign[] = [
   {
+    id: "camp-1",
     name: "Promo Energia",
     status: "In pausa",
     progress: 62,
     pressed: 148,
+    total: 1200,
+    sip: "cliente01-milano",
+    ivr: "promo-energia.wav",
+    createdAt: "21/06/2026, 20:41",
   },
   {
+    id: "camp-2",
     name: "Recall Lead Caldi",
     status: "Pronta",
     progress: 0,
     pressed: 0,
+    total: 430,
+    sip: "cliente01-roma",
+    ivr: "tts-richiamata",
+    createdAt: "21/06/2026, 21:10",
   },
   {
+    id: "camp-3",
     name: "Servizi Business",
     status: "Completata",
     progress: 100,
     pressed: 391,
+    total: 2600,
+    sip: "cliente01-milano",
+    ivr: "business.mp3",
+    createdAt: "20/06/2026, 18:05",
   },
 ];
 
@@ -119,7 +159,36 @@ function parseNumbers(input: string): ParsedNumbers {
   return { valid, duplicates, rejected };
 }
 
+function useLocalStorage<T>(key: string, initialValue: T) {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const storedValue = window.localStorage.getItem(key);
+      return storedValue ? (JSON.parse(storedValue) as T) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
 function App() {
+  const [clientName] = useLocalStorage("mia.clientName", "Cliente Demo");
+  const [campaigns, setCampaigns] = useLocalStorage<Campaign[]>(
+    "mia.campaigns",
+    defaultCampaigns
+  );
+  const [sipList, setSipList] = useLocalStorage<SipAccount[]>(
+    "mia.sipAccounts",
+    defaultSipAccounts
+  );
+  const [invoiceMessage, setInvoiceMessage] = useState(
+    "Nessuna fattura Bitcoin aperta"
+  );
   const [numbersInput, setNumbersInput] = useState(
     "3331234567\n+39 347 000 1122\n0039 320 555 0101\n348-555-0199"
   );
@@ -127,7 +196,7 @@ function App() {
     "Ciao, abbiamo una proposta per te. Premi 1 per parlare subito con un operatore."
   );
   const [campaignName, setCampaignName] = useState("Campagna clienti Italia");
-  const [selectedSip, setSelectedSip] = useState(sipAccounts[0].username);
+  const [selectedSip, setSelectedSip] = useState(sipList[0]?.username ?? "");
   const [consentConfirmed, setConsentConfirmed] = useState(true);
   const [ivrFileName, setIvrFileName] = useState("Nessun file selezionato");
 
@@ -140,7 +209,81 @@ function App() {
     20,
     Math.max(6, Math.ceil(ivrText.length / 13))
   );
-  const canLaunch = parsedNumbers.valid.length > 0 && consentConfirmed;
+  const selectedSipTarget = sipList.some(
+    (account) => account.username === selectedSip
+  )
+    ? selectedSip
+    : (sipList[0]?.username ?? "");
+  const canLaunch =
+    parsedNumbers.valid.length > 0 && consentConfirmed && selectedSipTarget !== "";
+  const activeCampaigns = campaigns.filter(
+    (campaign) => campaign.status !== "Completata"
+  ).length;
+  const totalPressed = campaigns.reduce(
+    (sum, campaign) => sum + campaign.pressed,
+    0
+  );
+
+  const handlePrepareCampaign = () => {
+    if (!canLaunch) {
+      return;
+    }
+
+    const newCampaign: Campaign = {
+      id: `camp-${Date.now()}`,
+      name: campaignName.trim() || "Campagna senza nome",
+      status: "Pronta",
+      progress: 0,
+      pressed: 0,
+      total: parsedNumbers.valid.length,
+      sip: selectedSipTarget,
+      ivr:
+        ivrFileName !== "Nessun file selezionato"
+          ? ivrFileName
+          : `TTS ${estimatedSeconds}s`,
+      createdAt: new Date().toLocaleString("it-IT"),
+    };
+
+    setCampaigns([newCampaign, ...campaigns]);
+  };
+
+  const handleGenerateSip = () => {
+    const nextNumber = sipList.length + 1;
+    const newAccount: SipAccount = {
+      id: `sip-${Date.now()}`,
+      name: `Operatore ${nextNumber}`,
+      username: `cliente01-operatore${nextNumber}`,
+      password: `sip-${Math.random().toString(36).slice(2, 10)}`,
+      status: "offline",
+    };
+
+    setSipList([...sipList, newAccount]);
+    setSelectedSip(newAccount.username);
+  };
+
+  const handleDownloadNumbers = () => {
+    const file = new Blob([parsedNumbers.valid.join("\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "numeri-validati.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleGenerateIvr = () => {
+    setIvrText(
+      "Ciao, ti stiamo chiamando per una richiesta autorizzata. Premi 1 per parlare con un operatore, oppure riaggancia per non essere ricontattato."
+    );
+  };
+
+  const handleCreateInvoice = () => {
+    setInvoiceMessage(
+      `Fattura demo generata: ${new Date().toLocaleTimeString("it-IT")} - attesa conferme BTC`
+    );
+  };
 
   return (
     <main className="app-shell">
@@ -176,6 +319,14 @@ function App() {
             <Bitcoin size={18} />
             Crediti BTC
           </a>
+          <a className="nav-item" href="#reports">
+            <BarChart3 size={18} />
+            Report
+          </a>
+          <a className="nav-item" href="#system">
+            <ServerCog size={18} />
+            Sistema
+          </a>
         </nav>
 
         <div className="sidebar-card">
@@ -188,6 +339,29 @@ function App() {
       </aside>
 
       <section className="content">
+        <section className="top-strip" aria-label="Sessione cliente">
+          <div>
+            <span className="eyebrow">Accesso demo</span>
+            <strong>{clientName}</strong>
+            <small>Ruolo: cliente - Piano: 32 canali condivisi</small>
+          </div>
+          <div className="top-strip-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={handleDownloadNumbers}
+              disabled={parsedNumbers.valid.length === 0}
+            >
+              <Download size={18} />
+              Scarica numeri validi
+            </button>
+            <button className="ghost-button" type="button">
+              <KeyRound size={18} />
+              Login demo
+            </button>
+          </div>
+        </section>
+
         <header className="hero">
           <div>
             <span className="eyebrow neon">Pannello clienti semplice</span>
@@ -236,11 +410,16 @@ function App() {
             </div>
           </div>
           <div className="hero-actions">
-            <button className="ghost-button" type="button">
+            <button className="ghost-button" type="button" onClick={handleGenerateIvr}>
               <Sparkles size={18} />
               Genera IVR
             </button>
-            <button className="primary-button" type="button" disabled={!canLaunch}>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!canLaunch}
+              onClick={handlePrepareCampaign}
+            >
               <Play size={18} />
               Avvia test
             </button>
@@ -261,6 +440,12 @@ function App() {
             detail={`${parsedNumbers.duplicates} duplicati rimossi`}
           />
           <StatCard
+            icon={<CalendarClock size={22} />}
+            label="Campagne attive"
+            value={activeCampaigns.toString()}
+            detail={`${campaigns.length} campagne salvate nel browser`}
+          />
+          <StatCard
             icon={<Wallet size={22} />}
             label="Credito demo"
             value="0.018 BTC"
@@ -270,7 +455,7 @@ function App() {
             icon={<PhoneForwarded size={22} />}
             label="Tasto 1"
             value="SIP"
-            detail="Instradamento verso Zoiper"
+            detail={`${totalPressed} pressioni registrate`}
           />
         </section>
 
@@ -297,10 +482,10 @@ function App() {
               <label className="field">
                 <span>Account SIP destinazione</span>
                 <select
-                  value={selectedSip}
+                  value={selectedSipTarget}
                   onChange={(event) => setSelectedSip(event.target.value)}
                 >
-                  {sipAccounts.map((account) => (
+                  {sipList.map((account) => (
                     <option key={account.username} value={account.username}>
                       {account.name} - {account.username}
                     </option>
@@ -332,10 +517,15 @@ function App() {
                 <span className="eyebrow">Anteprima routing</span>
                 <strong>{campaignName || "Campagna senza nome"}</strong>
                 <small>
-                  IVR - tasto 1 - {selectedSip} - report CDR/crediti
+                  IVR - tasto 1 - {selectedSipTarget} - report CDR/crediti
                 </small>
               </div>
-              <button className="primary-button" type="button" disabled={!canLaunch}>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!canLaunch}
+                onClick={handlePrepareCampaign}
+              >
                 <Zap size={18} />
                 Prepara campagna
               </button>
@@ -370,6 +560,12 @@ function App() {
                 <span>+{parsedNumbers.valid.length - 5} altri</span>
               )}
             </div>
+            {parsedNumbers.rejected.length > 0 && (
+              <p className="hint danger">
+                Scartati: {parsedNumbers.rejected.slice(0, 4).join(", ")}
+                {parsedNumbers.rejected.length > 4 ? "..." : ""}
+              </p>
+            )}
           </div>
 
           <div className="panel" id="ivr">
@@ -430,11 +626,12 @@ function App() {
               <Headphones size={22} />
             </div>
             <div className="sip-list">
-              {sipAccounts.map((account) => (
+              {sipList.map((account) => (
                 <div className="sip-row" key={account.username}>
                   <div>
                     <strong>{account.name}</strong>
                     <span>{account.username}@sip.tuodominio.it</span>
+                    <small>Password demo: {account.password}</small>
                   </div>
                   <StatusPill
                     label={account.status === "online" ? "Online" : "Offline"}
@@ -443,8 +640,13 @@ function App() {
                 </div>
               ))}
             </div>
-            <button className="ghost-button full-width" type="button">
-              + Genera nuovo account SIP
+            <button
+              className="ghost-button full-width"
+              type="button"
+              onClick={handleGenerateSip}
+            >
+              <Plus size={18} />
+              Genera nuovo account SIP
             </button>
           </div>
 
@@ -459,7 +661,7 @@ function App() {
             <div className="btc-card">
               <span>Wallet cliente</span>
               <strong>0.018 BTC</strong>
-              <small>Integrazione prevista: BTCPay Server webhook</small>
+              <small>{invoiceMessage}</small>
             </div>
             <div className="security-list">
               <span>
@@ -472,9 +674,17 @@ function App() {
                 <ListChecks size={16} /> CDR e report costi esportabili
               </span>
             </div>
+            <button
+              className="ghost-button full-width"
+              type="button"
+              onClick={handleCreateInvoice}
+            >
+              <Bitcoin size={18} />
+              Genera fattura BTC demo
+            </button>
           </div>
 
-          <div className="panel campaigns-history">
+          <div className="panel campaigns-history" id="reports">
             <div className="panel-heading">
               <div>
                 <span className="eyebrow">Monitoraggio</span>
@@ -482,19 +692,78 @@ function App() {
               </div>
               <Activity size={22} />
             </div>
-            {recentCampaigns.map((campaign) => (
-              <div className="campaign-row" key={campaign.name}>
+            {campaigns.map((campaign) => (
+              <div className="campaign-row" key={campaign.id}>
                 <div>
                   <strong>{campaign.name}</strong>
                   <span>
                     {campaign.status} - {campaign.pressed} utenti hanno premuto 1
+                    su {campaign.total} numeri
                   </span>
+                  <small>
+                    SIP: {campaign.sip} - IVR: {campaign.ivr} - {campaign.createdAt}
+                  </small>
                 </div>
                 <div className="progress">
                   <span style={{ width: `${campaign.progress}%` }} />
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="panel reports-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">CDR demo</span>
+                <h3>Report chiamate</h3>
+              </div>
+              <FileText size={22} />
+            </div>
+            <div className="report-table" role="table" aria-label="Report chiamate">
+              <div role="row">
+                <strong>Numero</strong>
+                <strong>Esito</strong>
+                <strong>Durata</strong>
+                <strong>Costo</strong>
+              </div>
+              {parsedNumbers.valid.slice(0, 4).map((number, index) => (
+                <div role="row" key={number}>
+                  <span>{number}</span>
+                  <span>{index % 2 === 0 ? "Premuto 1" : "Ascoltato IVR"}</span>
+                  <span>{12 + index * 7}s</span>
+                  <span>{(0.000004 + index * 0.000001).toFixed(6)} BTC</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel system-panel" id="system">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">Prossime integrazioni</span>
+                <h3>Stato sistema</h3>
+              </div>
+              <ServerCog size={22} />
+            </div>
+            <div className="integration-grid">
+              <IntegrationItem
+                title="Frontend clienti"
+                detail="Creato: dashboard, numeri, IVR, SIP, crediti e report demo."
+                done
+              />
+              <IntegrationItem
+                title="Backend/API"
+                detail="Da collegare: utenti reali, database, permessi e salvataggio server."
+              />
+              <IntegrationItem
+                title="Asterisk AMI/ARI"
+                detail="Da collegare: origination chiamate, DTMF 1, limiti 32 canali e CDR."
+              />
+              <IntegrationItem
+                title="BTCPay Server"
+                detail="Da collegare: fatture Bitcoin, webhook e accredito automatico."
+              />
+            </div>
           </div>
         </section>
       </section>
@@ -541,6 +810,26 @@ function SummaryItem({ label, value }: { label: string; value: number }) {
       <strong>{value}</strong>
       <span>{label}</span>
     </div>
+  );
+}
+
+function IntegrationItem({
+  title,
+  detail,
+  done = false,
+}: {
+  title: string;
+  detail: string;
+  done?: boolean;
+}) {
+  return (
+    <article className="integration-item">
+      <div className={done ? "integration-dot done" : "integration-dot"} />
+      <div>
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </div>
+    </article>
   );
 }
 

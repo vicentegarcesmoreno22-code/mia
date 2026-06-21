@@ -11,6 +11,11 @@ Prima versione del pannello web per campagne IVR multi-cliente.
 - Selezione account SIP/Zoiper.
 - Sezione crediti Bitcoin pronta per integrazione BTCPay Server.
 - Visuale animata in homepage.
+- Accesso demo cliente.
+- Salvataggio locale nel browser per campagne e account SIP demo.
+- Generazione account SIP demo.
+- Esportazione numeri validati in `.txt`.
+- Report CDR demo e checklist integrazioni Asterisk/BTCPay.
 
 ## Comandi
 
