@@ -105,116 +105,6 @@ const insertUser = db.prepare(`
   VALUES (@username, @passwordHash, @telegram, @role)
 `);
 
-function seedDemoUser() {
-  const existingUser = userSelect.get("cliente_demo") as UserRow | undefined;
-  if (existingUser) {
-    seedDefaultSipAccounts(existingUser.id);
-    seedDefaultCampaigns(existingUser.id);
-    return existingUser;
-  }
-
-  const passwordHash = bcrypt.hashSync("demo1234", 12);
-  const result = insertUser.run({
-    username: "cliente_demo",
-    passwordHash,
-    telegram: "@cliente_demo",
-    role: "client",
-  });
-
-  const user = userByIdSelect.get(result.lastInsertRowid) as UserRow;
-  seedDefaultSipAccounts(user.id);
-  seedDefaultCampaigns(user.id);
-  return user;
-}
-
-function seedDefaultSipAccounts(userId: number) {
-  const existingCount = db
-    .prepare("SELECT COUNT(*) AS count FROM sip_accounts WHERE user_id = ?")
-    .get(userId) as { count: number };
-
-  if (existingCount.count > 0) {
-    return;
-  }
-
-  const insertSip = db.prepare(`
-    INSERT INTO sip_accounts (id, user_id, name, username, password, status)
-    VALUES (@id, @userId, @name, @username, @password, @status)
-  `);
-
-  insertSip.run({
-    id: randomUUID(),
-    userId,
-    name: "Operatore Milano",
-    username: "cliente01-milano",
-    password: "zoiper-demo-92K",
-    status: "online",
-  });
-
-  insertSip.run({
-    id: randomUUID(),
-    userId,
-    name: "Operatore Roma",
-    username: "cliente01-roma",
-    password: "zoiper-demo-41Q",
-    status: "offline",
-  });
-}
-
-function seedDefaultCampaigns(userId: number) {
-  const existingCount = db
-    .prepare("SELECT COUNT(*) AS count FROM campaigns WHERE user_id = ?")
-    .get(userId) as { count: number };
-
-  if (existingCount.count > 0) {
-    return;
-  }
-
-  const insertCampaign = db.prepare(`
-    INSERT INTO campaigns
-      (id, user_id, name, status, progress, pressed, total, sip, ivr, numbers_json, created_at)
-    VALUES
-      (@id, @userId, @name, @status, @progress, @pressed, @total, @sip, @ivr, @numbersJson, @createdAt)
-  `);
-
-  [
-    {
-      name: "Promo Energia",
-      status: "In pausa",
-      progress: 62,
-      pressed: 148,
-      total: 1200,
-      sip: "cliente01-milano",
-      ivr: "promo-energia.wav",
-    },
-    {
-      name: "Recall Lead Caldi",
-      status: "Pronta",
-      progress: 0,
-      pressed: 0,
-      total: 430,
-      sip: "cliente01-roma",
-      ivr: "tts-richiamata",
-    },
-    {
-      name: "Servizi Business",
-      status: "Completata",
-      progress: 100,
-      pressed: 391,
-      total: 2600,
-      sip: "cliente01-milano",
-      ivr: "business.mp3",
-    },
-  ].forEach((campaign, index) => {
-    insertCampaign.run({
-      id: randomUUID(),
-      userId,
-      ...campaign,
-      numbersJson: "[]",
-      createdAt: new Date(Date.now() - index * 3600000).toISOString(),
-    });
-  });
-}
-
 function publicUser(user: UserRow): AuthUser {
   return {
     id: user.id,
@@ -299,9 +189,6 @@ const sipSchema = z.object({
   username: z.string().trim().min(3).max(80),
   password: z.string().trim().min(6).max(128),
 });
-
-seedDemoUser();
-
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? true }));
 app.use(express.json({ limit: "2mb" }));
@@ -356,7 +243,6 @@ app.post("/api/auth/register", (request, response) => {
   });
 
   const user = userByIdSelect.get(result.lastInsertRowid) as UserRow;
-  seedDefaultSipAccounts(user.id);
   const authUser = publicUser(user);
 
   response.status(201).json({

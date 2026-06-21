@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
@@ -65,58 +65,8 @@ type ParsedNumbers = {
   rejected: string[];
 };
 
-const defaultSipAccounts: SipAccount[] = [
-  {
-    id: "sip-1",
-    name: "Operatore Milano",
-    username: "cliente01-milano",
-    password: "zoiper-demo-92K",
-    status: "online",
-  },
-  {
-    id: "sip-2",
-    name: "Operatore Roma",
-    username: "cliente01-roma",
-    password: "zoiper-demo-41Q",
-    status: "offline",
-  },
-];
-
-const defaultCampaigns: Campaign[] = [
-  {
-    id: "camp-1",
-    name: "Promo Energia",
-    status: "In pausa",
-    progress: 62,
-    pressed: 148,
-    total: 1200,
-    sip: "cliente01-milano",
-    ivr: "promo-energia.wav",
-    createdAt: "21/06/2026, 20:41",
-  },
-  {
-    id: "camp-2",
-    name: "Recall Lead Caldi",
-    status: "Pronta",
-    progress: 0,
-    pressed: 0,
-    total: 430,
-    sip: "cliente01-roma",
-    ivr: "tts-richiamata",
-    createdAt: "21/06/2026, 21:10",
-  },
-  {
-    id: "camp-3",
-    name: "Servizi Business",
-    status: "Completata",
-    progress: 100,
-    pressed: 391,
-    total: 2600,
-    sip: "cliente01-milano",
-    ivr: "business.mp3",
-    createdAt: "20/06/2026, 18:05",
-  },
-];
+const emptySipAccounts: SipAccount[] = [];
+const emptyCampaigns: Campaign[] = [];
 
 function normalizePhoneNumber(rawValue: string) {
   const compact = rawValue.replace(/[^\d+]/g, "");
@@ -198,19 +148,19 @@ async function readApiError(response: Response) {
 
 function App() {
   const [authToken, setAuthToken] = useLocalStorage("mia.authToken", "");
-  const [isAuthenticated, setIsAuthenticated] = useState(Boolean(authToken));
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [loginUsername, setLoginUsername] = useState("cliente_demo");
-  const [loginPassword, setLoginPassword] = useState("demo1234");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [registerUsername, setRegisterUsername] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerTelegram, setRegisterTelegram] = useState("");
   const [authMessage, setAuthMessage] = useState(
-    "Puoi entrare con cliente_demo / demo1234 oppure registrare un nuovo cliente."
+    "Registrati oppure accedi con le tue credenziali."
   );
   const [clientName, setClientName] = useLocalStorage(
     "mia.clientName",
-    "Cliente Demo"
+    "Cliente"
   );
   const [currentUser, setCurrentUser] = useLocalStorage<ApiUser | null>(
     "mia.currentUser",
@@ -218,11 +168,11 @@ function App() {
   );
   const [campaigns, setCampaigns] = useLocalStorage<Campaign[]>(
     "mia.campaigns",
-    defaultCampaigns
+    emptyCampaigns
   );
   const [sipList, setSipList] = useLocalStorage<SipAccount[]>(
     "mia.sipAccounts",
-    defaultSipAccounts
+    emptySipAccounts
   );
   const [invoiceMessage, setInvoiceMessage] = useState(
     "Nessuna fattura Bitcoin aperta"
@@ -349,11 +299,11 @@ function App() {
 
   const handleCreateInvoice = () => {
     setInvoiceMessage(
-      `Fattura demo generata: ${new Date().toLocaleTimeString("it-IT")} - attesa conferme BTC`
+      `Fattura generata: ${new Date().toLocaleTimeString("it-IT")} - attesa conferme BTC`
     );
   };
 
-  const loadServerState = async (token: string) => {
+  const loadServerState = useCallback(async (token: string) => {
     const headers = { Authorization: `Bearer ${token}` };
     const [campaignsResponse, sipResponse] = await Promise.all([
       fetch("/api/campaigns", { headers }),
@@ -370,7 +320,42 @@ function App() {
       setSipList(body.accounts);
       setSelectedSip(body.accounts[0]?.username ?? "");
     }
-  };
+  }, [setCampaigns, setSipList]);
+
+  useEffect(() => {
+    if (!authToken) {
+      return;
+    }
+
+    void (async () => {
+      const response = await fetch("/api/me", {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      if (!response.ok) {
+        setAuthToken("");
+        setCampaigns([]);
+        setSipList([]);
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        return;
+      }
+
+      const body = (await response.json()) as { user: ApiUser };
+      setCurrentUser(body.user);
+      setClientName(body.user.username);
+      await loadServerState(authToken);
+      setIsAuthenticated(true);
+    })();
+  }, [
+    authToken,
+    loadServerState,
+    setAuthToken,
+    setCampaigns,
+    setClientName,
+    setCurrentUser,
+    setSipList,
+  ]);
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -509,7 +494,7 @@ function App() {
       <section className="content">
         <section className="top-strip" aria-label="Sessione cliente">
           <div>
-            <span className="eyebrow">Accesso demo</span>
+            <span className="eyebrow">Accesso</span>
             <strong>{clientName}</strong>
             <small>
               Ruolo: {currentUser?.role ?? "client"} - Telegram:{" "}
@@ -533,6 +518,8 @@ function App() {
               onClick={() => {
                 setAuthToken("");
                 setCurrentUser(null);
+                setCampaigns([]);
+                setSipList([]);
                 setIsAuthenticated(false);
               }}
             >
@@ -627,7 +614,7 @@ function App() {
           />
           <StatCard
             icon={<Wallet size={22} />}
-            label="Credito demo"
+            label="Credito"
             value="0.018 BTC"
             detail="Wallet cliente collegabile a BTCPay"
           />
@@ -811,7 +798,7 @@ function App() {
                   <div>
                     <strong>{account.name}</strong>
                     <span>{account.username}@sip.tuodominio.it</span>
-                    <small>Password demo: {account.password}</small>
+                    <small>Password: {account.password}</small>
                   </div>
                   <StatusPill
                     label={account.status === "online" ? "Online" : "Offline"}
@@ -860,7 +847,7 @@ function App() {
               onClick={handleCreateInvoice}
             >
               <Bitcoin size={18} />
-              Genera fattura BTC demo
+              Genera fattura BTC
             </button>
           </div>
 
@@ -894,7 +881,7 @@ function App() {
           <div className="panel reports-panel">
             <div className="panel-heading">
               <div>
-                <span className="eyebrow">CDR demo</span>
+                <span className="eyebrow">CDR</span>
                 <h3>Report chiamate</h3>
               </div>
               <FileText size={22} />
@@ -928,7 +915,7 @@ function App() {
             <div className="integration-grid">
               <IntegrationItem
                 title="Frontend clienti"
-                detail="Creato: dashboard, numeri, IVR, SIP, crediti e report demo."
+                detail="Creato: dashboard, numeri, IVR, SIP, crediti e report."
                 done
               />
               <IntegrationItem
@@ -1011,7 +998,7 @@ function LoginPage({
                 <ShieldCheck size={17} /> Consenso e opt-out visibili
               </span>
               <span>
-                <Bitcoin size={17} /> Crediti Bitcoin demo
+                <Bitcoin size={17} /> Crediti Bitcoin
               </span>
               <span>
                 <Headphones size={17} /> Trasferimento verso SIP/Zoiper
@@ -1064,7 +1051,7 @@ function LoginPage({
                       ? onLoginUsernameChange(event.target.value)
                       : onRegisterUsernameChange(event.target.value)
                   }
-                  placeholder="cliente_demo"
+                  placeholder="nome_utente"
                   autoComplete="username"
                 />
               </div>
@@ -1082,7 +1069,7 @@ function LoginPage({
                       ? onLoginPasswordChange(event.target.value)
                       : onRegisterPasswordChange(event.target.value)
                   }
-                  placeholder="demo1234"
+                  placeholder="password"
                   autoComplete={
                     mode === "login" ? "current-password" : "new-password"
                   }
@@ -1112,7 +1099,7 @@ function LoginPage({
               {mode === "login" ? "Entra nel pannello" : "Crea account"}
             </button>
 
-            <div className="login-demo-note">
+            <div className="login-note">
               <LockKeyhole size={16} />
               <span>{message}</span>
             </div>

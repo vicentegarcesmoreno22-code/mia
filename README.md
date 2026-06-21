@@ -11,13 +11,13 @@ Prima versione del pannello web per campagne IVR multi-cliente.
 - Selezione account SIP/Zoiper.
 - Sezione crediti Bitcoin pronta per integrazione BTCPay Server.
 - Visuale animata in homepage.
-- Accesso demo cliente.
-- Pagina login demo iniziale con nome utente/password precompilati.
-- Registrazione demo con nome utente, password e contatto Telegram.
-- Salvataggio locale nel browser per campagne e account SIP demo.
-- Generazione account SIP demo.
+- Accesso cliente.
+- Pagina login iniziale con nome utente/password.
+- Registrazione con nome utente, password e contatto Telegram.
+- Salvataggio su database per campagne e account SIP.
+- Generazione account SIP.
 - Esportazione numeri validati in `.txt`.
-- Report CDR demo e checklist integrazioni Asterisk/BTCPay.
+- Report CDR e checklist integrazioni Asterisk/BTCPay.
 - Backend API Express.
 - Database SQLite locale.
 - Registrazione/login reali con password hashata.
@@ -37,13 +37,8 @@ In sviluppo:
 - API: `http://localhost:4000`
 - Web: `http://localhost:5173`
 
-Credenziali demo create nel database:
-
-```text
-Nome utente: cliente_demo
-Password: demo1234
-Telegram: @cliente_demo
-```
+Il database parte senza utenti precompilati: crea il primo account dalla pagina
+di registrazione.
 
 ## Ambiente
 
